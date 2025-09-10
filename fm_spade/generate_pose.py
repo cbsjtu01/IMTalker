@@ -157,8 +157,8 @@ class InferenceAgent:
 		res_video_path: str,
 		ref_path: str,
 		audio_path: str,
-		pose_path: str,
-		gaze_path: str,
+		pose_path: str = None,
+		gaze_path: str = None,
 		a_cfg_scale: float	= 1.0,
 		nfe: int			= 10,
 		no_crop: bool 		= False,
@@ -167,16 +167,34 @@ class InferenceAgent:
 	) -> str:
 
 		data = self.data_processor.preprocess(ref_path, audio_path, no_crop = no_crop)
-		data["pose"], data["cam"]  = load_smirk(torch.load(pose_path))
-		data["gaze"] = torch.tensor(np.load(gaze_path), dtype=torch.float32).cuda()
+		# 如果有 pose 文件
+		if pose_path is not None and os.path.exists(pose_path):
+			data["pose"], data["cam"] = load_smirk(torch.load(pose_path))
+		else:
+			data["pose"], data["cam"] = None, None
+		if verbose:
+			print(f"> [Info] No pose provided for {ref_path}")
+		# 如果有 gaze 文件
+		if gaze_path is not None and os.path.exists(gaze_path):
+			data["gaze"] = torch.tensor(np.load(gaze_path), dtype=torch.float32).cuda()
+		else:
+			data["gaze"] = None
+			if verbose:
+				print(f"> [Info] No gaze provided for {ref_path}")
+
 		if verbose: print(f"> [Done] Preprocess.")
+
 		f_r, t_r = self.encode_image_into_latent(data['s'].to(self.opt.rank))
 		data["ref_x"] = t_r
+
 		sample = self.fm.sample(data, a_cfg_scale = a_cfg_scale,  nfe = nfe, seed = seed)
+		
 		data_out = self.decode_latent_into_image(f_r = f_r, t_r = t_r, t_c = sample)
+		
 		res_video_path = self.save_video(data_out["d_hat"], res_video_path, audio_path)
 		if verbose: print(f"> [Done] result saved at {res_video_path}")
 		return res_video_path
+	
 	######## Motion Encoder - Decoder ########
 	@torch.no_grad()
 	def encode_image_into_latent(self, x: torch.Tensor) -> list:
@@ -214,8 +232,6 @@ class InferenceOptions(BaseOptions):
 				default=None, type=str,help='ref')
 		parser.add_argument('--aud_path',
 				default=None, type=str, help='audio')
-		parser.add_argument('--emo',
-				default=None, type=str, help='emotion', choices=['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise'])
 		parser.add_argument('--no_crop',
 				action = 'store_true', help = 'not using crop')
 		parser.add_argument('--res_video_path',
@@ -225,65 +241,76 @@ class InferenceOptions(BaseOptions):
 		parser.add_argument('--res_dir', default="./results", type=str, help='result dir')
 		parser.add_argument('--input_root', default=None, type=str, help='input dir containing subdirs of ref + audio')
 		parser.add_argument('--imf_path', default="E:\codes\codes\IMF_last\exps\\0.2_vgg\checkpoints\last.ckpt", type=str)
-		parser.add_argument("--dim_motion", type=int, default=512)
-		parser.add_argument("--dim_c", type=int, default=512)
-		parser.add_argument('--dim_w', type=int, default=512, help='face dimension')
+		parser.add_argument("--dim_motion", type=int, default=32)
+		parser.add_argument("--dim_c", type=int, default=32)
+		parser.add_argument('--dim_w', type=int, default=32, help='face dimension')
 		return parser
 
 
 if __name__ == '__main__':
-	import os
-	import datetime
+    import os
+    import datetime
 
-	opt = InferenceOptions().parse()
-	opt.rank, opt.ngpus = 0, 1
-	agent = InferenceAgent(opt)
-	os.makedirs(opt.res_dir, exist_ok=True)
-	
-	# 指定输入的根目录（包含多个子目录，每个子目录有图像和音频）
-	input_root = opt.input_root  # 新增参数，比如：--input_root data/test_videos
-	pose_root = opt.pose_path
-	gaze_root = opt.gaze_path
-	# 遍历所有子目录
-	for subdir in sorted(os.listdir(input_root)):
-		sub_path = os.path.join(input_root, subdir)
-		if not os.path.isdir(sub_path):
-			continue
+    opt = InferenceOptions().parse()
+    opt.rank, opt.ngpus = 0, 1
+    agent = InferenceAgent(opt)
+    os.makedirs(opt.res_dir, exist_ok=True)
 
-		# 寻找图像和音频文件
-		ref_path = None
-		aud_path = None
+    # 指定输入的根目录（包含多个子目录，每个子目录有图像和音频）
+    input_root = opt.input_root  # 新增参数，比如：--input_root data/test_videos
+    pose_root = getattr(opt, "pose_path", None)   # 可能不存在
+    gaze_root = getattr(opt, "gaze_path", None)   # 可能不存在
 
-		for file in os.listdir(sub_path):
-			if file.lower().endswith(('.jpg', '.png')):
-				ref_path = os.path.join(sub_path, file)
-			elif file.lower().endswith(('.wav', '.m4a', '.mp3')):
-				aud_path = os.path.join(sub_path, file)
+    # 遍历所有子目录
+    for subdir in sorted(os.listdir(input_root)):
+        sub_path = os.path.join(input_root, subdir)
+        if not os.path.isdir(sub_path):
+            continue
 
-		filename_wo_ext = os.path.splitext(subdir)[0]  # 得到 "video"
-		pose_path = os.path.join(pose_root, filename_wo_ext + ".pt")
-		gaze_path = os.path.join(gaze_root, filename_wo_ext + ".npy")
-		if ref_path is None or aud_path is None:
-			print(f"[跳过] {subdir}：未找到图像或音频文件")
-			continue
+        # 寻找图像和音频文件
+        ref_path, aud_path = None, None
+        for file in os.listdir(sub_path):
+            if file.lower().endswith(('.jpg', '.png')):
+                ref_path = os.path.join(sub_path, file)
+            elif file.lower().endswith(('.wav', '.m4a', '.mp3')):
+                aud_path = os.path.join(sub_path, file)
 
-		# 生成输出路径
-		out_video_path = os.path.join(opt.res_dir, subdir + '.mp4')
-		os.makedirs(os.path.dirname(out_video_path), exist_ok=True)
+        filename_wo_ext = os.path.splitext(subdir)[0]  # 得到 "video"
 
-		# 推理
-		print(f"[处理] {subdir}")
-		agent.run_inference(
-			out_video_path,
-			ref_path,
-			aud_path,
-			pose_path,
-			gaze_path,
-			a_cfg_scale=opt.a_cfg_scale,
-			nfe=opt.nfe,
-			no_crop=opt.no_crop,
-			seed=opt.seed
-		)
+        # pose/gaze 可选
+        pose_path = None
+        gaze_path = None
+        if pose_root is not None:
+            cand_pose = os.path.join(pose_root, filename_wo_ext + ".pt")
+            if os.path.exists(cand_pose):
+                pose_path = cand_pose
+        if gaze_root is not None:
+            cand_gaze = os.path.join(gaze_root, filename_wo_ext + ".npy")
+            if os.path.exists(cand_gaze):
+                gaze_path = cand_gaze
 
-	print("✅ 批量推理完成。")
+        if ref_path is None or aud_path is None:
+            print(f"[跳过] {subdir}：未找到图像或音频文件")
+            continue
+
+        # 生成输出路径
+        out_video_path = os.path.join(opt.res_dir, subdir + '.mp4')
+        os.makedirs(os.path.dirname(out_video_path), exist_ok=True)
+
+        # 推理
+        print(f"[处理] {subdir}")
+        agent.run_inference(
+            out_video_path,
+            ref_path,
+            aud_path,
+            pose_path,   # 允许 None
+            gaze_path,   # 允许 None
+            a_cfg_scale=opt.a_cfg_scale,
+            nfe=opt.nfe,
+            no_crop=opt.no_crop,
+            seed=opt.seed
+        )
+
+    print("✅ 批量推理完成。")
+
 

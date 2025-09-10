@@ -373,24 +373,19 @@ class FlowMatchingTransformer(BaseModel):
         if a_cfg_scale != 1.0:
             # null 条件，用于做 classifier-free guidance
             null_a    = torch.zeros_like(a)
-            null_gaze = torch.zeros_like(gaze)
-            null_prev_gaze = torch.zeros_like(prev_gaze)
-            null_pose = torch.zeros_like(pose)
-            null_prev_pose = torch.zeros_like(prev_pose)
-            null_cam = torch.zeros_like(cam)
-            null_prev_cam = torch.zeros_like(prev_cam)
+
             # 拼接 unconditional / conditional
             audio_cat     = torch.cat([null_a,    a],    dim=0)
-            gaze_cat      = torch.cat([null_gaze, null_gaze], dim=0)
-            pose_cat      = torch.cat([null_pose, null_pose], dim=0)
-            cam_cat       = torch.cat([null_cam,  null_cam],  dim=0)
+            gaze_cat      = torch.cat([gaze, gaze], dim=0)
+            pose_cat      = torch.cat([pose, pose], dim=0)
+            cam_cat       = torch.cat([cam,  cam],  dim=0)
 
             x_cat         = torch.cat([x, x], dim=0)
             prev_x_cat    = torch.cat([prev_x, prev_x], dim=0)
             prev_a_cat    = torch.cat([prev_a, prev_a], dim=0)
-            prev_gaze_cat = torch.cat([null_prev_gaze, null_prev_gaze], dim=0)
-            prev_pose_cat = torch.cat([null_prev_pose, null_prev_pose], dim=0)
-            prev_cam_cat  = torch.cat([null_prev_cam, null_prev_cam], dim=0)
+            prev_gaze_cat = torch.cat([prev_gaze, prev_gaze], dim=0)
+            prev_pose_cat = torch.cat([prev_pose, prev_pose], dim=0)
+            prev_cam_cat  = torch.cat([prev_cam, prev_cam], dim=0)
             ref_x_cat     = torch.cat([ref_x, ref_x], dim=0)
 
             # forward with cond + uncond
@@ -430,5 +425,5 @@ class FlowMatchingTransformer(BaseModel):
                 prev_pose=prev_pose,
                 cam=cam,
                 prev_cam=prev_cam,
-				train=False
+                train=False
             )

@@ -102,7 +102,7 @@ class ConditionFMT(BaseModel):
     ) -> torch.Tensor:
         
         a, ref_x = data['a'], data['ref_x']
-        gaze, pose, cam = data['gaze'], data['pose'], data['cam']   # 新增条件
+        gaze, pose, cam = data.get('gaze', None), data.get('pose', None), data.get('cam', None)
         B = a.shape[0]
     
         # make time
@@ -114,10 +114,22 @@ class ConditionFMT(BaseModel):
         a = self.audio_encoder.inference(a, seq_len=T)
         a = self.audio_projection(a)
     
-        # 额外条件投影
-        gaze = self.gaze_projection(gaze.to(self.opt.rank)).unsqueeze(dim=0)
-        pose = self.pose_projection(pose.to(self.opt.rank)).unsqueeze(dim=0)
-        cam  = self.cam_projection(cam.to(self.opt.rank)).unsqueeze(dim=0)
+        # ============ 条件投影 ============ #
+        if gaze is not None:
+            gaze = self.gaze_projection(gaze.to(self.opt.rank)).unsqueeze(0)
+        else:
+            gaze = torch.zeros(B, T, self.opt.dim_c, device=self.opt.rank)
+    
+        if pose is not None:
+            pose = self.pose_projection(pose.to(self.opt.rank)).unsqueeze(0)
+        else:
+            pose = torch.zeros(B, T, self.opt.dim_c, device=self.opt.rank)
+    
+        if cam is not None:
+            cam = self.cam_projection(cam.to(self.opt.rank)).unsqueeze(0)
+        else:
+            cam = torch.zeros(B, T, self.opt.dim_c, device=self.opt.rank)
+        # ================================= #
     
         sample = []
         for t in range(0, int(math.ceil(T / self.num_frames_for_clip))):
@@ -157,14 +169,12 @@ class ConditionFMT(BaseModel):
                         pad_len = self.num_frames_for_clip - cond_tensor.shape[1]
                         last_frame = cond_tensor[:, -1:, :].expand(-1, pad_len, -1)
                         cond_tensor = torch.cat([cond_tensor, last_frame], dim=1)
-                
-                # 直接赋值给原变量
+    
                 if cond_name == "a_t": a_t = cond_tensor
                 elif cond_name == "gaze_t": gaze_t = cond_tensor
                 elif cond_name == "pose_t": pose_t = cond_tensor
                 elif cond_name == "cam_t": cam_t = cond_tensor
-
-            #import pdb;pdb.set_trace()
+    
             # 定义 ODE 系统
             def sample_chunk(tt, zt):
                 out = self.fmt.forward_with_cfv(
@@ -191,6 +201,7 @@ class ConditionFMT(BaseModel):
     
         sample = torch.cat(sample, dim=1)[:, :T]
         return sample
+
 
 
 ################# Condition Encoders ################
