@@ -207,7 +207,7 @@ if __name__ == '__main__':
     parser.add_argument("--save_path", type=str, default="./results", help="Output directory")
 
     # Model Params
-    parser.add_argument("--renderer_path", type=str, required=True, help="Checkpoint path")
+    parser.add_argument("--renderer_path", type=str, default="./checkpoints/renderer.ckpt", help="Checkpoint path")
     parser.add_argument("--input_size", type=int, default=256, help="Resolution")
     parser.add_argument('--swin_res_threshold', type=int, default=128)
     parser.add_argument('--num_heads', type=int, default=8)
