@@ -36,6 +36,7 @@ def ensure_checkpoints():
     REPO_TYPE = "model" 
 
     files_to_download = [
+        'config.yaml'
         "renderer.ckpt",
         "generator.ckpt",
         "wav2vec2-base-960h/config.json",
