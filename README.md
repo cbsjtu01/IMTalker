@@ -130,7 +130,7 @@ If you find our work useful for your research, please consider citing:
 
 We express our sincerest gratitude to the excellent previous works that inspired this project:
 
-- **[IMF](https://github.com/ueoo/IMF)**: We adapted the framework and training pipeline from IMF and its reproduction code.
+- **[IMF](https://github.com/ueoo/IMF)**: We adapted the framework and training pipeline from IMF and its reproduction code [IMF](https://github.com/johndpope/IMF).
 - **[FLOAT](https://github.com/deepbrainai-research/float)**: We referenced the model architecture and implementation of Float for our generator.
 - **[Wav2Vec2](https://huggingface.co/facebook/wav2vec2-base-960h)**: We utilized Wav2Vec as our audio encoder.
 - **[Face-Alignment](https://github.com/1adrianb/face-alignment)**: We used FaceAlignment for cropping images and videos.
