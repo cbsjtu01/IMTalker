@@ -114,6 +114,34 @@ def load_generator(config: ModelConfig) -> nn.Module:
     return generator
 
 
+def get_component_inputs(renderer: nn.Module, config: ModelConfig) -> Dict[str, Tuple]:
+    """
+    Generate proper example inputs for each renderer component by tracing data flow.
+
+    Each component expects different input shapes:
+    - dense_feature_encoder: (B, 3, 256, 256) -> (f_r, i_r)
+    - latent_token_encoder: (B, 3, 256, 256) -> t_r
+    - latent_token_decoder: adapted tokens -> motion features
+    - frame_decoder: motion features -> decoded frame
+    """
+    device = config.device
+    x = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, device=device)
+
+    with torch.no_grad():
+        # Get intermediate tensors by running through the model
+        f_r, i_r = renderer.dense_feature_encoder(x)
+        t_r = renderer.latent_token_encoder(x)
+        ta_r = renderer.adapt(t_r, i_r)
+        ma_r = renderer.latent_token_decoder(ta_r)
+
+    return {
+        "dense_feature_encoder": (x,),
+        "latent_token_encoder": (x,),
+        "latent_token_decoder": (ta_r,),  # Takes adapted tokens
+        "frame_decoder": (ma_r,),  # Takes motion features
+    }
+
+
 def export_torchscript(renderer: nn.Module, config: ModelConfig, output_dir: str) -> bool:
     """
     Export renderer to TorchScript format.
@@ -127,8 +155,8 @@ def export_torchscript(renderer: nn.Module, config: ModelConfig, output_dir: str
 
     logger.info("Exporting to TorchScript...")
 
-    # Example inputs
-    x = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, device=device)
+    # Get proper inputs for each component
+    component_inputs = get_component_inputs(renderer, config)
 
     success_count = 0
     components = [
@@ -140,9 +168,9 @@ def export_torchscript(renderer: nn.Module, config: ModelConfig, output_dir: str
 
     for name, module in components:
         try:
-            # Use torch.jit.script for modules with control flow
-            # Use torch.jit.trace for simpler modules
-            scripted = torch.jit.trace(module, x, strict=False)
+            inputs = component_inputs[name]
+            # Use torch.jit.trace for these modules
+            scripted = torch.jit.trace(module, inputs, strict=False)
             output_path = os.path.join(output_dir, f"{name}.pt")
             torch.jit.save(scripted, output_path)
             logger.info(f"  Exported {name} -> {output_path}")
@@ -170,8 +198,8 @@ def export_compile_cache(renderer: nn.Module, config: ModelConfig, output_dir: s
 
     logger.info(f"Pre-warming torch.compile cache -> {cache_dir}")
 
-    device = config.device
-    x = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, device=device)
+    # Get proper inputs for each component
+    component_inputs = get_component_inputs(renderer, config)
 
     compile_opts = {"mode": "default", "dynamic": True}
 
@@ -186,10 +214,11 @@ def export_compile_cache(renderer: nn.Module, config: ModelConfig, output_dir: s
         logger.info(f"  Compiling {name}...")
         try:
             compiled = torch.compile(module, **compile_opts)
+            inputs = component_inputs[name]
             # Warmup run to trigger compilation
             with torch.no_grad():
                 for _ in range(3):
-                    _ = compiled(x)
+                    _ = compiled(*inputs)
             logger.info(f"  {name} compiled and cached")
         except Exception as e:
             logger.warning(f"  Failed to compile {name}: {e}")
@@ -283,22 +312,25 @@ def export_onnx(renderer: nn.Module, config: ModelConfig, output_dir: str) -> bo
     with various runtimes (ONNX Runtime, TensorRT, OpenVINO, etc.)
     """
     os.makedirs(output_dir, exist_ok=True)
-    device = config.device
 
     logger.info("Exporting to ONNX...")
 
-    x = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, device=device)
+    # Get proper inputs for each component
+    component_inputs = get_component_inputs(renderer, config)
 
     components = [
-        ("latent_token_encoder", renderer.latent_token_encoder, (x,)),
-        ("latent_token_decoder", renderer.latent_token_decoder, (x,)),
+        ("dense_feature_encoder", renderer.dense_feature_encoder),
+        ("latent_token_encoder", renderer.latent_token_encoder),
+        ("latent_token_decoder", renderer.latent_token_decoder),
+        ("frame_decoder", renderer.frame_decoder),
     ]
 
     success_count = 0
-    for name, module, inputs in components:
+    for name, module in components:
         output_path = os.path.join(output_dir, f"{name}.onnx")
         try:
-            logger.info(f"  Exporting {name}...")
+            inputs = component_inputs[name]
+            logger.info(f"  Exporting {name} (input shape: {inputs[0].shape})...")
             torch.onnx.export(
                 module,
                 inputs,
