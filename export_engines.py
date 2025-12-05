@@ -406,13 +406,62 @@ def benchmark_exports(config: ModelConfig, export_dir: str) -> Dict[str, float]:
     results["torch_compile"] = statistics.mean(times)
     logger.info(f"  torch.compile: {results['torch_compile']:.2f} ms")
 
+    # Benchmark TensorRT if engines exist
+    trt_dir = os.path.join(export_dir, "tensorrt")
+    trt_encoder_path = os.path.join(trt_dir, "latent_token_encoder_trt.ts")
+    trt_decoder_path = os.path.join(trt_dir, "latent_token_decoder_trt.ts")
+
+    if os.path.exists(trt_encoder_path) and os.path.exists(trt_decoder_path):
+        logger.info("Benchmarking TensorRT engines...")
+
+        # Load fresh renderer and replace components with TRT versions
+        renderer_trt = load_renderer(config)
+
+        try:
+            # Import torch_tensorrt to register custom ops for loading
+            import torch_tensorrt
+
+            # Load TRT models - they're ExportedProgram format from dynamo
+            trt_encoder_ep = torch_tensorrt.load(trt_encoder_path)
+            trt_decoder_ep = torch_tensorrt.load(trt_decoder_path)
+
+            # Convert ExportedProgram to callable module
+            trt_encoder = trt_encoder_ep.module().to(device)
+            trt_decoder = trt_decoder_ep.module().to(device)
+
+            # Replace the components
+            renderer_trt.latent_token_encoder = trt_encoder
+            renderer_trt.latent_token_decoder = trt_decoder
+
+            with torch.no_grad():
+                for _ in range(warmup):
+                    _ = renderer_trt(x, x)
+                torch.cuda.synchronize()
+
+                times = []
+                for _ in range(runs):
+                    torch.cuda.synchronize()
+                    start = time.perf_counter()
+                    _ = renderer_trt(x, x)
+                    torch.cuda.synchronize()
+                    times.append((time.perf_counter() - start) * 1000)
+
+            results["tensorrt"] = statistics.mean(times)
+            logger.info(f"  TensorRT: {results['tensorrt']:.2f} ms")
+        except Exception as e:
+            logger.warning(f"  TensorRT benchmark failed: {e}")
+    else:
+        logger.info("TensorRT engines not found, skipping TRT benchmark")
+        logger.info(f"  Run: python export_engines.py --tensorrt")
+
     # Print summary
     logger.info("\n" + "=" * 50)
     logger.info("BENCHMARK SUMMARY")
     logger.info("=" * 50)
     for name, time_ms in results.items():
         speedup = results["original"] / time_ms if name != "original" else 1.0
-        logger.info(f"  {name:20s}: {time_ms:8.2f} ms  ({speedup:.2f}x)")
+        fps = 1000.0 / time_ms
+        logger.info(f"  {name:20s}: {time_ms:8.2f} ms  ({speedup:.2f}x)  {fps:.1f} FPS")
 
     return results
 
